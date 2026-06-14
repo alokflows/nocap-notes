@@ -213,8 +213,16 @@ function checkReminders() {
     if (e.pre > 0 && !e.firedPre && now >= e.at - e.pre * 6e4 && now < e.at) { say("⏰ In " + e.pre + " min — " + e.text); e.firedPre = true; changed = true; }
     if (!e.firedDue && now >= e.at) { say("⏰ Now — " + e.text); e.firedDue = true; changed = true; }
   });
-  var kept = list.filter(function(e) { return !(e.firedDue && now - e.at > 864e5); }); // drop a day after firing
+  var kept = list.filter(function(e) { return !e.firedDue; }); // a reminder is removed the moment it fires
   if (changed || kept.length !== list.length) saveRem(kept);
+}
+// Proactive morning briefing: each morning, surface what's on the plate today (the "Jarvis" touch).
+function morningBriefing() {
+  var now = Date.now(), end = now + 17 * 36e5;
+  var today = loadRem().filter(function(e) { return !e.firedDue && e.at >= now && e.at <= end; }).sort(function(a, b) { return a.at - b.at; });
+  if (!today.length) return;
+  var lines = today.map(function(e) { return "• " + Utilities.formatDate(new Date(e.at), TIMEZONE, "HH:mm") + " — " + e.text; });
+  say("☀️ Good morning! Here's your day:\n" + lines.join("\n"));
 }
 function tool_web(query) {
   var keys = groqKeys();
@@ -258,7 +266,7 @@ function buildSystemPrompt() {
     "Never show note names/paths/'sources' unless the user says 'show references'. " +
     "Answer from the user's notes via search/read; if they lack a factual or current answer, web_search and weave it in (cite web links). " +
     "When the user shares info, save it as a tidy well-titled page (ask first only if truly unclear). To forget something, trash its page or rewrite without that fact. " +
-    "Reminders/meetings → set_reminder with an absolute time (alerts 10 min before + at the time). " +
+    "Reminders/meetings → set_reminder with an absolute time (alerts 10 min before + at the time). If the user shares a plan or intention for a future day/time ('tomorrow I'll…', 'next week…'), set a reminder for it too so it resurfaces — be proactive. " +
     "Only claim an action if its tool returned ok this turn — never bluff 'Done'; if something fails, say so in one short sentence.\n" +
     "Today " + Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd") + ". Note pages: " + buildIndex();
 }
@@ -557,6 +565,7 @@ function setup() {
   tg("setChatMenuButton", {menu_button: {type: "commands"}});
   ScriptApp.getProjectTriggers().forEach(function(t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger("checkReminders").timeBased().everyMinutes(1).create();   // proactive reminder watchdog
+  ScriptApp.newTrigger("morningBriefing").timeBased().everyDays(1).atHour(8).create();
   ScriptApp.newTrigger("organizeWiki").timeBased().everyHours(6).create();
   ScriptApp.newTrigger("lintWiki").timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(9).create();
   ScriptApp.newTrigger("purgeTrash").timeBased().everyDays(1).atHour(3).create();
