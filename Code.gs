@@ -297,6 +297,7 @@ function runAgent(text, m, archiveName) {
 }
 
 // Benchmark-only: run the agent and RETURN the reply text (no Telegram send). Used by the eval endpoint.
+// TEMP benchmark helper — returns reply text (no Telegram send); stripped before final commit.
 // ================= MESSAGE ROUTING =================
 function handleMessage(m) {
   if (!m || !m.from || String(m.from.id) !== String(USER_ID)) return;
@@ -332,7 +333,10 @@ function bulkOrganize(text, archiveName) {
   for (var i = 0; i < items.length; i += 25) {
     typing();
     var group = items.slice(i, i + 25);
-    var res = callText("Group these items into 4-8 broad categories. Return STRICT JSON only: {\"categories\":{\"<Category>\":[\"item\",...]}}", group.join("\n"));
+    // Feed the categories chosen so far so later chunks REUSE them (consistent, non-fragmented buckets).
+    var existing = Object.keys(cats).filter(function(c) { return c !== "Uncategorized"; });
+    var hint = existing.length ? " Reuse these existing categories whenever an item fits; only invent a new one if none fits: " + existing.join(", ") + "." : "";
+    var res = callText("Group these items into broad categories (5-8 total across the whole list)." + hint + " Return STRICT JSON only: {\"categories\":{\"<Category>\":[\"item\",...]}}", group.join("\n"));
     var parsed = null; if (res) try { parsed = JSON.parse(stripFences(res)).categories; } catch(e) {}
     if (parsed && Object.keys(parsed).length) Object.keys(parsed).forEach(function(k) { cats[k] = (cats[k] || []).concat(parsed[k]); });
     else { cats["Uncategorized"] = (cats["Uncategorized"] || []).concat(group); uncat += group.length; }  // nothing is ever dropped
