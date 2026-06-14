@@ -1,0 +1,8 @@
+# clasp project pointer (contains your private scriptId) — keep local only
+.clasp.json
+.clasprc.json
+
+# OS / editor cruft
+.DS_Store
+node_modules/
+*.log

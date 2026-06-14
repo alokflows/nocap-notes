@@ -1,0 +1,5 @@
+# Only these belong to the Apps Script project. Everything else (the Cloudflare worker,
+# README, etc.) lives in the repo but must NOT be pushed to Apps Script.
+**/**
+!appsscript.json
+!Code.gs
