@@ -196,16 +196,20 @@ function tool_trash(file) {
 function loadRem() { try { return JSON.parse(getProp("REMINDERS") || "[]"); } catch(e) { return []; } }
 function saveRem(a) { setProp("REMINDERS", JSON.stringify(a)); }
 function fmtAt(ms)  { return Utilities.formatDate(new Date(ms), TIMEZONE, "MMM d, HH:mm"); }
-function tool_setReminder(when, task, lead) {
-  var w = String(when || "").trim(), hasTime = /\d{1,2}:\d{2}/.test(w);
-  var d; try { d = Utilities.parseDate(w, TIMEZONE, hasTime ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"); } catch(e) { d = null; }
-  if (!d || isNaN(d.getTime())) return {ok: false, error: "couldn't read the date/time — give it as YYYY-MM-DD HH:mm"};
-  var at = hasTime ? d.getTime() : d.getTime() + 9 * 36e5;  // all-day reminders fire at 9am
-  var now = Date.now();
-  // lead = how many minutes before to pre-alert; comes from the user ("half an hour before" → 30,
-  // "on time only" → 0). Defaults to 10 for a timed reminder, 0 for an all-day one.
+function tool_setReminder(when, task, lead, in_minutes) {
+  var now = Date.now(), at, hasTime;
+  if (in_minutes != null && in_minutes !== "" && !isNaN(Number(in_minutes))) {
+    at = now + Math.round(Number(in_minutes)) * 6e4; hasTime = true;       // relative: "in 3 min", "in 2 hours"
+  } else {
+    var w = String(when || "").trim(); hasTime = /\d{1,2}:\d{2}/.test(w);
+    var d; try { d = Utilities.parseDate(w, TIMEZONE, hasTime ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"); } catch(e) { d = null; }
+    if (!d || isNaN(d.getTime())) return {ok: false, error: "need a time — pass in_minutes for relative, or when as YYYY-MM-DD HH:mm"};
+    at = hasTime ? d.getTime() : d.getTime() + 9 * 36e5;                    // all-day → 9am
+  }
+  // lead = minutes before to pre-alert, from the user ("half an hour before"→30, "on time only"→0; default 10).
   var pre = hasTime ? (lead == null || lead === "" ? 10 : Math.max(0, Math.round(Number(lead)) || 0)) : 0;
-  var ev = {id: String(now) + Math.floor(Math.random() * 1e4), at: at, text: String(task || "reminder"), pre: pre, firedPre: now >= at - pre * 6e4, firedDue: false};
+  if (pre * 6e4 >= at - now) pre = 0;                                       // too soon for a pre-alert → just fire on time
+  var ev = {id: String(now) + Math.floor(Math.random() * 1e4), at: at, text: String(task || "reminder"), pre: pre, firedPre: false, firedDue: false};
   var list = loadRem(); list.push(ev); saveRem(list);
   return {ok: true, when: fmtAt(at), task: ev.text, alerts: pre ? pre + " min before + on time" : "on time only"};
 }
@@ -244,8 +248,8 @@ var TOOLS = [
    parameters: {type: "object", properties: {file: {type: "string", description: "short page name e.g. profile.md"}, content: {type: "string"}}, required: ["file", "content"]}},
   {name: "trash", description: "Soft-delete a whole note page (recoverable). Verifies it is gone.",
    parameters: {type: "object", properties: {file: {type: "string"}}, required: ["file"]}},
-  {name: "set_reminder", description: "Schedule a reminder/meeting alert. Resolve relative times ('today 3pm','tomorrow','in 2 hours') to an absolute 'YYYY-MM-DD HH:mm' (24-hour, local time). Set lead_minutes from what the user asks for the advance alert.",
-   parameters: {type: "object", properties: {when: {type: "string", description: "YYYY-MM-DD HH:mm (or YYYY-MM-DD for all-day)"}, task: {type: "string"}, lead_minutes: {type: "integer", description: "minutes before to pre-alert, taken from the user: 'half an hour before'→30, '15 min before'→15, 'a day before'→1440, 'on time only'→0. Default 10 if unspecified."}}, required: ["when", "task"]}},
+  {name: "set_reminder", description: "Schedule a reminder/meeting. For relative timing ('in 3 minutes','in 2 hours','after 30 min') pass in_minutes. For a clock time or day ('today 3pm','tomorrow','Monday 9am') pass when as 'YYYY-MM-DD HH:mm' (use the current time given in the prompt to compute it). Never ask the user for an exact timestamp — you have the current time, just compute it.",
+   parameters: {type: "object", properties: {when: {type: "string", description: "YYYY-MM-DD HH:mm (or YYYY-MM-DD for all-day)"}, in_minutes: {type: "integer", description: "minutes from now, for relative reminders ('in 3 min'→3, 'in 2 hours'→120)"}, task: {type: "string"}, lead_minutes: {type: "integer", description: "advance pre-alert in minutes from the user: 'half an hour before'→30, 'on time only'→0. Default 10."}}, required: ["task"]}},
   {name: "web_search", description: "Search the live internet when the notes don't have the answer and the question is factual or about the world/current events. Returns a researched answer with sources.",
    parameters: {type: "object", properties: {query: {type: "string"}}, required: ["query"]}}
 ];
@@ -256,7 +260,7 @@ function dispatchTool(name, args) {
     case "read":         return tool_read(args.file);
     case "write":        return tool_write(args.file, args.content);
     case "trash":        return tool_trash(args.file);
-    case "set_reminder": return tool_setReminder(args.when, args.task, args.lead_minutes);
+    case "set_reminder": return tool_setReminder(args.when, args.task, args.lead_minutes, args.in_minutes);
     case "web_search":   return tool_web(args.query);
     default:             return {error: "unknown tool " + name};
   }
@@ -269,9 +273,9 @@ function buildSystemPrompt() {
     "Never show note names/paths/'sources' unless the user says 'show references'. " +
     "Answer from the user's notes via search/read; if they lack a factual or current answer, web_search and weave it in (cite web links). " +
     "When the user shares info, save it as a tidy well-titled page (ask first only if truly unclear). To forget something, trash its page or rewrite without that fact. " +
-    "Reminders/meetings → set_reminder with an absolute time AND lead_minutes taken from the user's words ('half an hour before'→30, 'on time only'→0; default 10). If the user shares a plan/intention for a future day/time, set a reminder so it resurfaces — be proactive. " +
+    "Reminders/meetings → set_reminder. For 'in N minutes/hours' use in_minutes; for a clock time/day compute when ('YYYY-MM-DD HH:mm') from the current time below — NEVER ask the user for an exact timestamp. Set lead_minutes from their words ('half an hour before'→30, 'on time only'→0; default 10). If they share a plan/intention for a future time, set a reminder so it resurfaces — be proactive. " +
     "Only claim an action if its tool returned ok this turn — never bluff 'Done'; if something fails, say so in one short sentence.\n" +
-    "Today " + Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd") + ". Note pages: " + buildIndex();
+    "Current time: " + Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd HH:mm") + " (" + TIMEZONE + "). Note pages: " + buildIndex();
 }
 function runAgent(text, m, archiveName) {
   var sys = buildSystemPrompt(), msgs = [];
